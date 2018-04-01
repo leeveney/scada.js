@@ -12,13 +12,17 @@ Design considerations (TO BE COMPLETED)
 1. Place 2 dropdown side by side (exact copy of each other)
 2. Change one, expect the other to be exactly the same of the one
 """
-require! 'prelude-ls': {find, empty, take}
+require! 'prelude-ls': {find, empty, take, flatten, filter, unique-by}
 require! 'actors': {RactiveActor}
 require! 'aea': {sleep}
 
 require! 'sifter': Sifter
 require! '../data-table/sifter-workaround': {asciifold}
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 Ractive.components['dropdown'] = Ractive.extend do
     template: RACTIVE_PREPARSE('index.pug')
     isolated: yes
@@ -43,6 +47,7 @@ Ractive.components['dropdown'] = Ractive.extend do
         external-change = no
         shandler = null
 
+<<<<<<< Updated upstream
         small-part-of = (data) ~>
             if data? and not empty data
                 take @get('load-first'), data
@@ -50,6 +55,22 @@ Ractive.components['dropdown'] = Ractive.extend do
                 []
 
 
+=======
+        ensure-selected-in-reduced = (selected) ~>
+            console.log "selected is : ", selected
+            _selected = flatten [selected]
+            items = filter (.[keyField] in _selected), @get \data
+            console.log "matching items: ", items
+            curr-reduced = @get \dataReduced
+            console.log "curr reduced was: ", curr-reduced
+            reduced = curr-reduced ++ items |> unique-by (.[keyField])
+            console.log "modified dataReduced:", reduced
+            @set \dataReduced, reduced
+            #@set \dataReduced, @get \data
+
+        small-part-of = (data) ->
+            take 100, (data or [])
+>>>>>>> Stashed changes
 
         update-dropdown = (_new) ~>
             if @get \debug => @actor.log.log "#{@_guid}: selected is changed: ", _new
@@ -116,7 +137,9 @@ Ractive.components['dropdown'] = Ractive.extend do
                             sort: [{field: nameField, direction: 'asc'}]
                             nesting: no
                             conjunction: "and"
-                        @set \dataReduced, [data[..id] for small-part-of(result.items)]
+                        @set \dataReduced, [data[..id] for small-part-of result.items]
+                        ensure-selected-in-reduced @get \selected-key
+
                         #@actor.c-log "Dropdown (#{@_guid}) : data reduced: ", [..id for @get \dataReduced]
                     else
                         #@actor.c-log "Dropdown (#{@_guid}) : searchTerm is empty"
@@ -138,6 +161,8 @@ Ractive.components['dropdown'] = Ractive.extend do
                 if data and not empty data
                     @set \loading, no
                     @set \dataReduced, small-part-of data
+                    console.log "data is updated, curr reduced : ", @get \dataReduced
+                    ensure-selected-in-reduced @get \selected-key
                     @set \sifter, new Sifter(data)
                     # Update dropdown visually when data is updated
                     if selected = @get \selected-key
@@ -153,6 +178,7 @@ Ractive.components['dropdown'] = Ractive.extend do
                 if typeof! _new is \Array
                     if JSON.stringify(_new or []) isnt JSON.stringify(old or [])
                         if not empty _new
+                            ensure-selected-in-reduced _new
                             <~ sleep 10ms
                             update-dropdown _new
                         else
@@ -164,10 +190,8 @@ Ractive.components['dropdown'] = Ractive.extend do
 
                 #@actor.c-log "DROPDOWN: selected key set to:", _new
                 if _new
-                    item = find (.[keyField] is _new), @get \dataReduced
-                    unless item
-                        item = find (.[keyField] is _new), @get \data
-                        @push \dataReduced, item
+                    item = find (.[keyField] is _new), @get \data
+                    ensure-selected-in-reduced _new
                     @set \item, item
                     <~ sleep 10ms
                     # Workaround for dropdown update bug
