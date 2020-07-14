@@ -167,62 +167,22 @@ for-browserify =
 __DEPENDENCIES__ = {root: null}
 _browserify_change_flag = false
 
-# Organize Tasks
-gulp.task \default, ->
-    do function run-all
-        gulp.start do
-            #\browserify <= started by dependencyTrack
-            \html
-            \vendor-js
-            \vendor-css
-            \vendor2-js
-            \vendor2-css
-            \assets
-            \pug
-            \preparserify-workaround
-            \dependencyTrack
-
-    if optimize-for-production
-        return
-
-    watch pug-entry-files, ->
-        gulp.start \pug
-
-    watch html-entry-files, ->
-        gulp.start \html
-
-    watch for-css, (event) ->
-        gulp.start <[ vendor-css ]>
-
-    watch for-js, (event) ->
-        gulp.start <[ vendor-js ]>
-
-    watch for-css2, (event) ->
-        gulp.start <[ vendor2-css ]>
-
-    watch for-js2, (event) ->
-        gulp.start <[ vendor2-js ]>
-
-    watch for-browserify, ->
-        _browserify_change_flag := true
-
-    watch for-preparserify-workaround, ->
-        gulp.start \preparserify-workaround
-
-    watch for-assets, ->
-        gulp.start \assets
-
+gulp.task \html, (done) ->
+    # Workaround with if/else:
+    # Couldn't make it work like this: https://stackoverflow.com/a/60743545/1952991
+    unless empty html-entry-files
+        gulp.src html-entry-files, {+allowEmpty}
+            #.pipe rename basename: app
+            .pipe flatten!
+            .pipe gulp.dest paths.client-public
+    else
+        done!
 
 # Copy js and html files as is
 #gulp.task \copy-js, ->
 #    gulp.src "#{paths.client-src}/**/*.js", {base: paths.client-src}
 #        .pipe gulp.dest paths.client-public
 
-gulp.task \html, ->
-    gulp.src html-entry-files
-        #.pipe rename basename: app
-        .pipe flatten!
-        .pipe gulp.dest paths.client-public
 
 my-uglify = (x) ->
     # mangle: shutterstock/rickshaw/issues/52#issuecomment-313836636
@@ -315,7 +275,7 @@ gulp.task \browserify, ->
                 if optimize-for-production
                     contents = file.contents.to-string!
                     es5 = my-buble contents
-                    file.contents = new Buffer es5
+                    file.contents = new Buffer.from es5
                 cb null, file
 
             # --- DO NOT CHANGE THE ORDER --- 
@@ -346,7 +306,7 @@ compile-js = (watchlist, output) ->
         .pipe through.obj (file, enc, cb) ->
             contents = file.contents.to-string!
             optimized = optimize-js contents
-            file.contents = new Buffer optimized
+            file.contents = new Buffer.from optimized
             cb null, file
 
         # ES-5 Transpilation MUST BE the last step
@@ -354,7 +314,7 @@ compile-js = (watchlist, output) ->
             if optimize-for-production
                 contents = file.contents.to-string!
                 es5 = my-buble contents
-                file.contents = new Buffer es5
+                file.contents = new Buffer.from es5
             cb null, file
 
         # compaction must be after ES-5 transpilation
@@ -414,21 +374,24 @@ gulp.task \assets, ->
 
 
 # Compile pug files in paths.client-src to the paths.client-tmp folder
-gulp.task \pug ->
-    gulp.src pug-entry-files
-        .pipe tap (file) ->
-            #console.log "pug: compiling file: ", path.basename file.path
-        .pipe pug do
-            pretty: yes
-            locals:
-                app: 'ScadaJS'
-            filters: pug-filters
-        .on \error, (err) ->
-            on-error \pug, err
-            @emit \end
-        #.pipe rename basename: app
-        .pipe flatten!
-        .pipe gulp.dest paths.client-public
+gulp.task \pug (done) ->
+    if empty pug-entry-files
+        done!
+    else
+        gulp.src pug-entry-files, {+allowEmpty}
+            .pipe tap (file) ->
+                #console.log "pug: compiling file: ", path.basename file.path
+            .pipe pug do
+                pretty: yes
+                locals:
+                    app: 'ScadaJS'
+                filters: pug-filters
+            .on \error, (err) ->
+                on-error \pug, err
+                @emit \end
+            #.pipe rename basename: app
+            .pipe flatten!
+            .pipe gulp.dest paths.client-public
 
 # FIXME: This is a workaround before ractive-preparserify
 # will handle this process all by itself.
@@ -491,9 +454,52 @@ gulp.task \dependencyTrack, ->
                         touch.sync f
 
             #console.log preparserify-dep-list
-            gulp.start \browserify
+            (gulp.task \browserify)!
             _browserify_change_flag := false
             processing := no
 
         <~ sleep 1000ms
         lo(op) unless argv.production
+
+
+# Organize Tasks
+gulp.task \default, (gulp.series do
+    #\browserify <= started by dependencyTrack
+    \html
+    \vendor-js
+    \vendor-css
+    \vendor2-js
+    \vendor2-css
+    \assets
+    \pug
+    \preparserify-workaround
+    \dependencyTrack), -> 
+    if optimize-for-production
+        return
+
+    watch pug-entry-files, ->
+        (gulp.task \pug)! 
+
+    watch html-entry-files, ->
+        (gulp.task \html)!
+
+    watch for-css, (event) ->
+        (gulp.task \vendor-css)!
+
+    watch for-js, (event) ->
+        (gulp.task \vendor-js)!
+
+    watch for-css2, (event) ->
+        (gulp.task \vendor2-css)!
+
+    watch for-js2, (event) ->
+        (gulp.task \vendor2-js)!
+
+    watch for-browserify, ->
+        _browserify_change_flag := true
+
+    watch for-preparserify-workaround, ->
+        (gulp.task \preparserify-workaround)!
+
+    watch for-assets, ->
+        (gulp.task \assets)!
