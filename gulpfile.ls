@@ -41,6 +41,8 @@ require! 'gulp-git': git
 require! 'gulp-cssimport': cssimport
 require! 'event-stream': es
 
+sep = if /^win/.test process.platform => '\\' else '/'
+
 get-version = (path, callback) ->
     if typeof! path is \Function
         callback = path
@@ -75,8 +77,6 @@ paths =
 paths.client-public = "#{paths.build-folder}/#{webapp}"
 paths.components-src = "#{__dirname}/components"
 
-
-
 notifier.notify {title: "ScadaJS" message: "Webapp \"#{webapp}\" started!"}
 
 on-error = (source, msg) ->
@@ -97,11 +97,9 @@ log-info = (source, msg) ->
     notifier.notify {title: "GULP.#{source}", message: msg} if notification-enabled
     console.log console-msg
 
-
 pug-entry-files = glob.sync "#{paths.client-webapps}/#{webapp}/index.pug"
 html-entry-files = glob.sync "#{paths.client-webapps}/#{webapp}/index.html"
 app-entry-files = glob.sync "#{paths.client-webapps}/#{webapp}/app*.{ls,js}"
-
 
 for-css =
     "#{paths.vendor-folder}/**/*.css"
@@ -163,26 +161,9 @@ for-browserify =
     "#{paths.client-root}/lib/**/*.ls"
     "#{paths.client-root}/lib/**/*.js"
 
-
+# Global variables
 __DEPENDENCIES__ = {root: null}
 _browserify_change_flag = false
-
-gulp.task \html, (done) ->
-    # Workaround with if/else:
-    # Couldn't make it work like this: https://stackoverflow.com/a/60743545/1952991
-    unless empty html-entry-files
-        gulp.src html-entry-files, {+allowEmpty}
-            #.pipe rename basename: app
-            .pipe flatten!
-            .pipe gulp.dest paths.client-public
-    else
-        done!
-
-# Copy js and html files as is
-#gulp.task \copy-js, ->
-#    gulp.src "#{paths.client-src}/**/*.js", {base: paths.client-src}
-#        .pipe gulp.dest paths.client-public
-
 
 my-uglify = (x) ->
     # mangle: shutterstock/rickshaw/issues/52#issuecomment-313836636
@@ -250,6 +231,42 @@ get-bundler = (entry) ->
         ..transform ractive-preparserify
         ..transform browserify-optimize-js
 
+# Concatenate vendor javascript files into public/js/vendor.js
+compile-js = (watchlist, output) ->
+    gulp.src watchlist
+        .pipe cat output
+        .pipe through.obj (file, enc, cb) ->
+            contents = file.contents.to-string!
+            optimized = optimize-js contents
+            file.contents = new Buffer.from optimized
+            cb null, file
+
+        # ES-5 Transpilation MUST BE the last step
+        .pipe through.obj (file, enc, cb) ->
+            if optimize-for-production
+                contents = file.contents.to-string!
+                es5 = my-buble contents
+                file.contents = new Buffer.from es5
+            cb null, file
+
+        # compaction must be after ES-5 transpilation
+        .pipe if-else optimize-for-production, my-uglify
+        .pipe gulp.dest "#{paths.client-public}/js"
+
+compile-css = (watchlist, output) ->
+    gulp.src watchlist
+        .pipe cssimport {includePaths: ['node_modules', '../node_modules']}
+        .pipe cat output
+
+        # themes are searched in ../themes path, so do not save css in root
+        # folder
+        .pipe gulp.dest "#{paths.client-public}/css"
+
+# Gulp Tasks 
+# ---------------------
+
+# Browserify
+# --------------
 files = app-entry-files
 b-count = files.length
 first-browserify-done = no
@@ -298,37 +315,63 @@ gulp.task \browserify, ->
                     console.log "------------------------------------------"
 
     return es.merge.apply null, tasks
+    
+gulp.task \dependencyTrack, ->
+    curr = null
+    processed = []
+    processing = no
+    <~ :lo(op) ~>
+        #console.log "checking project version...", version, curr
+        version <~ get-version paths.client-root
+        if (JSON.stringify(version) isnt JSON.stringify(curr)) or (_browserify_change_flag and not processing)
+            processing := yes
+            curr := JSON.parse JSON.stringify version
+            #console.log "triggering browserify!"
+            __DEPENDENCIES__.root = curr
 
-# Concatenate vendor javascript files into public/js/vendor.js
-compile-js = (watchlist, output) ->
-    gulp.src watchlist
-        .pipe cat output
-        .pipe through.obj (file, enc, cb) ->
-            contents = file.contents.to-string!
-            optimized = optimize-js contents
-            file.contents = new Buffer.from optimized
-            cb null, file
+            """ DEBUG
+            dump-file = (name, obj) ->
+                require('fs').writeFileSync(name, JSON.stringify(obj, null, 2))
 
-        # ES-5 Transpilation MUST BE the last step
-        .pipe through.obj (file, enc, cb) ->
-            if optimize-for-production
-                contents = file.contents.to-string!
-                es5 = my-buble contents
-                file.contents = new Buffer.from es5
-            cb null, file
+            dump-file "tmp-preparserify-dep-list", preparserify-dep-list
+            dump-file "tmp-browserify-cache", browserify-cache
+            """
 
-        # compaction must be after ES-5 transpilation
-        .pipe if-else optimize-for-production, my-uglify
-        .pipe gulp.dest "#{paths.client-public}/js"
+            unless _browserify_change_flag
+                # invalidate all dependencies to refresh __DEPENDENCIES__ string
+                console.log "=== Invalidating all Browserify cache due to commit change: "
+                console.log "       ", JSON.stringify(__DEPENDENCIES__)
+                processed.length = 0
+                for f, c of browserify-cache
+                    if f.ends-with ".ls" and f not in processed
+                        processed.push f
+                        #console.log "invalidating : #{f}"
+                        touch.sync f
 
-compile-css = (watchlist, output) ->
-    gulp.src watchlist
-        .pipe cssimport {includePaths: ['node_modules', '../node_modules']}
-        .pipe cat output
+            #console.log preparserify-dep-list
+            (gulp.task \browserify)!
+            _browserify_change_flag := false
+            processing := no
 
-        # themes are searched in ../themes path, so do not save css in root
-        # folder
-        .pipe gulp.dest "#{paths.client-public}/css"
+        <~ sleep 1000ms
+        lo(op) unless argv.production
+
+gulp.task \browserifyFlag, (done) ->
+    console.log "Browserify change flag is set."
+    _browserify_change_flag := true
+
+# End of Browserify 
+
+
+gulp.task \html, (done) ->
+    # Workaround with if/else:
+    # Couldn't make it work like this: https://stackoverflow.com/a/60743545/1952991
+    unless empty html-entry-files
+        gulp.src html-entry-files, {+allowEmpty}
+            #.pipe rename basename: app
+            .pipe flatten!
+            .pipe gulp.dest paths.client-public        
+    done!
 
 gulp.task \vendor-js, ->
     compile-js for-js, "vendor.js"
@@ -337,18 +380,12 @@ gulp.task \vendor-js, ->
 gulp.task \vendor-css, ->
     compile-css for-css, "vendor.css"
 
-
 gulp.task \vendor2-js, ->
     compile-js for-js2, "vendor2.js"
 
 # Concatenate vendor css files into public/css/vendor.css
 gulp.task \vendor2-css, ->
     compile-css for-css2, "vendor2.css"
-
-# Copy assets into the public directory as is
-# search for a folder named "assets", copy and paste its contents into
-# build folder.
-sep = if /^win/.test process.platform => '\\' else '/'
 
 gulp.task \assets, ->
     gulp.src for-assets
@@ -375,20 +412,22 @@ gulp.task \assets, ->
 
 # Compile pug files in paths.client-src to the paths.client-tmp folder
 gulp.task \pug (done) ->
-    gulp.src pug-entry-files, {+allowEmpty}
-        .pipe tap (file) ->
-            console.log "pug: compiling file: ", path.basename file.path
-        .pipe pug do
-            pretty: yes
-            locals:
-                app: 'ScadaJS'
-            filters: pug-filters
-        .on \error, (err) ->
-            on-error \pug, err
-            @emit \end
-        #.pipe rename basename: app
-        .pipe flatten!
-        .pipe gulp.dest paths.client-public
+    unless empty pug-entry-files
+        gulp.src pug-entry-files, {+allowEmpty}
+            .pipe tap (file) ->
+                #console.log "pug: compiling file: ", path.basename file.path
+            .pipe pug do
+                pretty: yes
+                locals:
+                    app: 'ScadaJS'
+                filters: pug-filters
+            .on \error, (err) ->
+                on-error \pug, err
+                @emit \end
+            #.pipe rename basename: app
+            .pipe flatten!
+            .pipe gulp.dest paths.client-public
+    done!
 
 # FIXME: This is a workaround before ractive-preparserify
 # will handle this process all by itself.
@@ -418,63 +457,17 @@ gulp.task \preparserify-workaround ->
                         touch.sync js-file
                         delete debounce[js-file]
 
-gulp.task \dependencyTrack, ->
-    curr = null
-    processed = []
-    processing = no
-    <~ :lo(op) ~>
-        #console.log "checking project version...", version, curr
-        version <~ get-version paths.client-root
-        if (JSON.stringify(version) isnt JSON.stringify(curr)) or (_browserify_change_flag and not processing)
-            processing := yes
-            curr := JSON.parse JSON.stringify version
-            #console.log "triggering browserify!"
-            __DEPENDENCIES__.root = curr
-
-            /* DEBUG
-            dump-file = (name, obj) ->
-                require('fs').writeFileSync(name, JSON.stringify(obj, null, 2))
-
-            dump-file "tmp-preparserify-dep-list", preparserify-dep-list
-            dump-file "tmp-browserify-cache", browserify-cache
-            */
-
-            unless _browserify_change_flag
-                # invalidate all dependencies to refresh __DEPENDENCIES__ string
-                console.log "=== Invalidating all Browserify cache due to commit change: "
-                console.log "       ", JSON.stringify(__DEPENDENCIES__)
-                processed.length = 0
-                for f, c of browserify-cache
-                    if f.ends-with ".ls" and f not in processed
-                        processed.push f
-                        #console.log "invalidating : #{f}"
-                        touch.sync f
-
-            #console.log preparserify-dep-list
-            (gulp.task \browserify)!
-            _browserify_change_flag := false
-            processing := no
-
-        <~ sleep 1000ms
-        lo(op) unless argv.production
-
-gulp.task \browserifyFlag, (done) ->
-    console.log "Browserify change flag is set."
-    _browserify_change_flag := true
-
 gulp.task \watchChanges, (done) ->
-    if optimize-for-production
-        return
-    console.log "start watching files"
-    watch pug-entry-files, gulp.series \pug 
-    watch html-entry-files, gulp.series \html
-    watch for-css, gulp.series \vendor-css
-    watch for-js, gulp.series \vendor-js
-    watch for-css2, gulp.series \vendor2-css
-    watch for-js2, gulp.series \vendor2-js
-    watch for-browserify, gulp.series \browserifyFlag
-    watch for-preparserify-workaround, gulp.series \preparserify-workaround
-    watch for-assets, gulp.series \assets
+    unless optimize-for-production
+        watch pug-entry-files, gulp.series \pug 
+        watch html-entry-files, gulp.series \html
+        watch for-css, gulp.series \vendor-css
+        watch for-js, gulp.series \vendor-js
+        watch for-css2, gulp.series \vendor2-css
+        watch for-js2, gulp.series \vendor2-js
+        watch for-assets, gulp.series \assets
+        watch for-browserify, gulp.series \browserifyFlag
+        watch for-preparserify-workaround, gulp.series \preparserify-workaround
     done!
 
 # Start the tasks
@@ -486,7 +479,6 @@ gulp.task \default, gulp.series do
     \vendor2-css
     \assets
     \pug
+    \watchChanges
     \preparserify-workaround
     \dependencyTrack
-    \watchChanges
-    #\browserify <= started by dependencyTrack
