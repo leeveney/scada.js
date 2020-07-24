@@ -161,10 +161,6 @@ for-browserify =
     "#{paths.client-root}/lib/**/*.ls"
     "#{paths.client-root}/lib/**/*.js"
 
-# Global variables
-__DEPENDENCIES__ = {root: null}
-_browserify_change_flag = false
-
 my-uglify = (x) ->
     # mangle: shutterstock/rickshaw/issues/52#issuecomment-313836636
     # keep_fnames: aktos-io/scada.js#172
@@ -181,8 +177,11 @@ my-buble = (input) ->
     console.log "*** Transpiled to ES5 in #{((Date.now! - t0)/1000).to-fixed 2}s"
     es5.code
 
+# We need to manually invalidate browserify cache 
+# because of preparsing Ractive files requires compiling the Pug files, which 
+# in turn requires to track the pug file dependencies. 
 browserify-cache = {}
-extra-time = 0
+
 get-bundler = (entry) ->
     b = browserify do
         entries: [entry]
@@ -200,19 +199,6 @@ get-bundler = (entry) ->
             watchify unless optimize-for-production
 
     b
-        ..transform (file) ->
-            through (buf, enc, next) ->
-                content = buf.to-string \utf8
-                t0 = Date.now!
-                try
-                    #@push "__DEPENDENCIES__ = #{__DEPENDENCIES__}; \n #{content}"
-                    @push content.replace /__DEPENDENCIES__/g, JSON.stringify(__DEPENDENCIES__)
-                    extra-time += Date.now! - t0
-                    next!
-                catch _ex
-                    @emit 'error', _ex
-                    return
-
         ..transform (file) ->
             # MUST be before ractive-preparserify
             unless /.*\.ls$/.test(file)
@@ -308,27 +294,21 @@ gulp.task \browserify, ->
                 b-count-- if b-count > 0
                 if b-count is 0
                     log-info \browserify, "Browserify finished"
-                    console.log "Extra time: #{extra-time / 1000}s"
-                    extra-time := 0
                     first-browserify-done := yes
                     b-count := files.length
                     console.log "------------------------------------------"
-
     return es.merge.apply null, tasks
     
-gulp.task \dependencyTrack, ->
-    curr = null
-    processed = []
-    processing = no
+#gulp.task \browserifyAll, gulp.parallel()->
+    
+gulp.task \versionTrack, ->
+    curr = null 
     <~ :lo(op) ~>
         #console.log "checking project version...", version, curr
         version <~ get-version paths.client-root
-        if (JSON.stringify(version) isnt JSON.stringify(curr)) or (_browserify_change_flag and not processing)
-            processing := yes
+        if (JSON.stringify(version) isnt JSON.stringify(curr)) 
             curr := JSON.parse JSON.stringify version
-            #console.log "triggering browserify!"
-            __DEPENDENCIES__.root = curr
-
+            console.log "Changed project version: ", curr 
             """ DEBUG
             dump-file = (name, obj) ->
                 require('fs').writeFileSync(name, JSON.stringify(obj, null, 2))
@@ -336,30 +316,8 @@ gulp.task \dependencyTrack, ->
             dump-file "tmp-preparserify-dep-list", preparserify-dep-list
             dump-file "tmp-browserify-cache", browserify-cache
             """
-
-            unless _browserify_change_flag
-                # invalidate all dependencies to refresh __DEPENDENCIES__ string
-                console.log "=== Invalidating all Browserify cache due to commit change: "
-                console.log "       ", JSON.stringify(__DEPENDENCIES__)
-                processed.length = 0
-                for f, c of browserify-cache
-                    if f.ends-with ".ls" and f not in processed
-                        processed.push f
-                        #console.log "invalidating : #{f}"
-                        touch.sync f
-
-            #console.log preparserify-dep-list
-            (gulp.task \browserify)!
-            _browserify_change_flag := false
-            processing := no
-
         <~ sleep 1000ms
         lo(op) unless argv.production
-
-gulp.task \browserifyFlag, (done) ->
-    console.log "Browserify change flag is set."
-    _browserify_change_flag := true
-
 # End of Browserify 
 
 
@@ -466,7 +424,7 @@ gulp.task \watchChanges, (done) ->
         watch for-css2, gulp.series \vendor2-css
         watch for-js2, gulp.series \vendor2-js
         watch for-assets, gulp.series \assets
-        watch for-browserify, gulp.series \browserifyFlag
+        watch for-browserify, gulp.series \browserify
         watch for-preparserify-workaround, gulp.series \preparserify-workaround
     done!
 
@@ -481,4 +439,5 @@ gulp.task \default, gulp.series do
     \pug
     \watchChanges
     \preparserify-workaround
-    \dependencyTrack
+    \versionTrack
+    \browserify
