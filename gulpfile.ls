@@ -83,7 +83,7 @@ on-error = (source, msg) ->
     msg = try
         msg.to-string!
     catch
-        "unknown message: #{e}"
+        "unknown error message: #{msg}" 
     console-msg = "GULP ERROR: #{source} : #{msg}"
     notifier.notify {title: console-msg, message: msg} if notification-enabled
     console.log console-msg
@@ -192,7 +192,7 @@ get-bundler = (entry) ->
             paths.client-webapps
             "#{__dirname}/node_modules"
             "#{__dirname}/.."
-        extensions: <[ .ls ]>
+        extensions: <[ .ls .pug .html ]>
         cache: browserify-cache
         package-cache: {}
         plugin:
@@ -203,19 +203,27 @@ get-bundler = (entry) ->
             # MUST be before ractive-preparserify
             unless /.*\.ls$/.test(file)
                 return through!
+                
+            contents = ''
+            write = (chunk, enc, next) !->
+                contents += chunk.to-string \utf-8
+                next!
 
-            through (buf, enc, next) !->
-                content = buf.to-string \utf8
+            flush = (cb) -> 
+                #console.log "lsc file contents:", contents
                 try
                     filename = file.replace(/^.*[\\\/]/, '')
-                    js = lsc.compile content, {+bare, -header, map: 'embedded', filename}
+                    js = lsc.compile contents, {+bare, -header, map: 'embedded', filename}
                     @push js.code
-                    next!
+                    cb!
                 catch
                     console.log "Livescript compile error: ", e
                     @emit 'error', e
+
+            return through.obj write, flush 
+            
         ..transform ractive-preparserify
-        ..transform browserify-optimize-js
+        #..transform browserify-optimize-js
 
 # Concatenate vendor javascript files into public/js/vendor.js
 compile-js = (watchlist, output) ->
@@ -263,10 +271,8 @@ gulp.task \browserify, ->
         get-bundler file
             .bundle!
             .on \error, (err) ->
-                msg = try
-                    err.message
-                catch
-                    err
+                #console.log "browserify error is:", err 
+                msg = err?annotated or err?message or err 
                 on-error \browserify, msg
                 @emit \end
 
@@ -388,7 +394,7 @@ gulp.task \pug (done) ->
     done!
 
 # FIXME: This is a workaround before ractive-preparserify
-# will handle this process all by itself.
+# will handle the cache invalidation 
 debounce = {}
 gulp.task \preparserify-workaround ->
     gulp.src for-preparserify-workaround

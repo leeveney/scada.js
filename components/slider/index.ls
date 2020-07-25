@@ -2,7 +2,7 @@ require! 'nouislider'
 require! 'aea': {merge}
 
 Ractive.components['slider'] = Ractive.extend do
-    template: RACTIVE_PREPARSE('index.pug')
+    template: require('./index.pug')
     isolated: yes
     onrender: ->
         slider = @find \.slider

@@ -7,26 +7,26 @@ require! '../../templates/filters': {pug-filters}
 USAGE:
 
 Replace `template: '#my-template'` with
-    * `template: RACTIVE_PREPARSE('my-template.pug')` if file contains only template code
-    * `template: RACTIVE_PREPARSE('my-template.pug', '#some-template-id')` if file contains multiple template codes
+    * `template: require('my-template.pug')` if file contains only template code
+    * `template: require('my-template.pug', '#some-template-id')` if file contains multiple template codes
 
 Example:
 
     ractive = new Ractive do
         el: '#main-output'
-        template: RACTIVE_PREPARSE('base.pug')
+        template: require('base.pug')
 
 ********************************************************************************/
 
 export preparserify-dep-list = {}
 
-preparse-jade = (filename, content, template-id) ->
+preparse-pug = (filename, content, template-id) ->
     """
     Returns {parsed, dependencies}
     """
     dependencies = {}
 
-    ext = path.extname template-file
+    ext = path.extname filename 
     dirname = path.dirname filename
     template-full-path = path.join dirname, filename
     template-contents = content
@@ -43,7 +43,7 @@ preparse-jade = (filename, content, template-id) ->
             """
 
         # TODO: We should get dependencies and rendered content in one function call
-        opts = {filename: file, filters: pug-filters, doctype: 'html'}
+        opts = {filename: filename, filters: pug-filters, doctype: 'html'}
         compile = pug.compile template-contents, opts
         deps = pug.compileClientWithDependenciesTracked template-contents, opts .dependencies
         # End of TODO
@@ -55,20 +55,20 @@ preparse-jade = (filename, content, template-id) ->
         #console.log "DEPS : ", JSON.stringify preparserify-dep-list, null, 2
         template-html = compile!
 
-    template = if template-id
+    /* extraction of template from a div is disabled.
+    if template-id
         $ = cheerio.load template-html, {-lowerCaseAttributeNames, -lowerCaseTags, -decodeEntities}
         try
-            $ template-id .html!
+            template-html = $ template-id .html!
         catch
             throw new Error "ractive-preparserify: can not get template id: #{template-id} from #{html}"
-    else
-        template-html
+    */
 
     # Debug
     #console.log "DEBUG: ractive-preparsify: compiling template: #{path.basename path.dirname file}/#{jade-file} #{template-id or \ALL_HTML }"
     # End of debug
 
-    parsed-template = Ractive.parse template |> JSON.stringify
+    parsed-template = Ractive.parse template-html
     
     return {
         parsed: parsed-template
@@ -79,24 +79,30 @@ function isTemplate file
     return /.*\.(html|pug)$/.test(file);
 
 export ractive-preparserify = (file) ->
-    if not isTemplate(file) => return through()
+    if not isTemplate(file)
+        return through()
+    
+    #console.log "ractive-preparserify file is:", file
+    contents = ''
+    write = (chunk, enc, next) !->
+        contents += chunk.to-string \utf-8
+        next!
 
-    data = ''
-    return through(write, end)
-
-    function write buf 
-        data += buf
-
-    function end
+    flush = (cb) -> 
         try
-            console.log "compiling file: #{file} data: #{data}"
-            src = "hello"
-            #src = compile(file, data);
-        catch error
-            this.emit('error', error);
+            x = preparse-pug file, contents
+            @push "module.exports = #{JSON.stringify x.parsed}"
+            cb!
+        catch
+            console.error "Preparserify error: ", e
+            @emit 'error', e
 
-        this.queue(src);
-        this.queue(null);
+    return through.obj write, flush
+
+    /*
+    this.queue(src);
+    this.queue(null);
+    */
 
     /*
     through (buf, enc, next) ->
@@ -105,6 +111,6 @@ export ractive-preparserify = (file) ->
         #[template-file, template-id] = params-str.split ',' |> map (.replace /["'\s]+/g, '')
         
         
-        # this.push(content.replace /RACTIVE_PREPARSE\(([^\)]+)\)/g, preparse-jade)
+        # this.push(content.replace /require\(([^\)]+)\)/g, preparse-jade)
         next!
     */
