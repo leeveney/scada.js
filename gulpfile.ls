@@ -394,7 +394,7 @@ gulp.task \pug (done) ->
     done!
 
 # FIXME: This is a workaround before ractive-preparserify
-# will handle the cache invalidation 
+# will handle the browserify cache invalidation 
 debounce = {}
 gulp.task \preparserify-workaround ->
     gulp.src for-preparserify-workaround

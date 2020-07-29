@@ -20,37 +20,32 @@ Example:
 
 export preparserify-dep-list = {}
 
-preparse-pug = (filename, content, template-id) ->
+preparse-pug = (filename, template) ->
     """
     Returns {parsed, dependencies}
     """
-    dependencies = {}
-
     ext = path.extname filename 
     dirname = path.dirname filename
     template-full-path = path.join dirname, filename
-    template-contents = content
 
-    if ext is \.html
-        template-html = template-contents
-        dependencies[][template-full-path].push filename
+    dependencies = [filename]
+    if ext is \.html 
+        template-html = template 
     else if ext is \.pug
         # include templates/mixins.pug file
         mixin-relative = path.relative dirname, process.cwd!
-        template-contents = """
+        template = """
             include #{mixin-relative}/templates/mixins.pug
-            #{template-contents}
+            #{template}
             """
 
         # TODO: We should get dependencies and rendered content in one function call
         opts = {filename: filename, filters: pug-filters, doctype: 'html'}
-        compile = pug.compile template-contents, opts
-        deps = pug.compileClientWithDependenciesTracked template-contents, opts .dependencies
+        compile = pug.compile template, opts
+        deps = (pug.compileClientWithDependenciesTracked template, opts).dependencies
         # End of TODO
 
-        for dep in (deps ++ template-full-path)
-            #console.log "dep is: ", dep, "for the file: ", filename
-            dependencies[][dep].push filename
+        dependencies ++= deps 
 
         #console.log "DEPS : ", JSON.stringify preparserify-dep-list, null, 2
         template-html = compile!
@@ -92,6 +87,12 @@ export ractive-preparserify = (file) ->
         try
             x = preparse-pug file, contents
             @push "module.exports = #{JSON.stringify x.parsed}"
+            /*
+            for x.dependencies
+                console.log "emitting dependency:", ..
+                @emit \file, .. 
+            */
+
             cb!
         catch
             console.error "Preparserify error: ", e
