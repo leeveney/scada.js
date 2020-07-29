@@ -22,10 +22,7 @@ require! 'node-notifier': notifier
 require! 'gulp-concat': cat
 require! 'gulp-terser': terser
 require! './lib/aea': {sleep, pack}
-require! './lib/aea/ractive-preparserify': {
-    ractive-preparserify
-    preparserify-dep-list
-}
+require! './lib/aea/ractive-preparserify': {ractive-preparserify}
 require! './lib/aea/browserify-optimize-js'
 require! 'gulp-flatten': flatten
 require! 'gulp-tap': tap
@@ -121,12 +118,14 @@ for-js2 =
     "!#{paths.vendor2-folder}/**/__tmp__/**"
     "!#{paths.vendor2-folder}/**/assets/**"
 
+'''
 # changes on these files will invalidate browserify cache
 for-preparserify-workaround =
     "#{paths.client-webapps}/#{webapp}/**/*.pug"
     "#{paths.client-webapps}/#{webapp}/**/*.html"
     "#{paths.components-src}/**/*.pug"
     "#{paths.components-src}/**/*.html"
+'''
 
 for-assets =
     "#{paths.components-src}/**/assets/**"
@@ -183,7 +182,7 @@ my-buble = (input) ->
 browserify-cache = {}
 
 get-bundler = (entry) ->
-    b = browserify do
+    b = watchify browserify do
         entries: [entry]
         debug: true
         paths:
@@ -192,15 +191,14 @@ get-bundler = (entry) ->
             paths.client-webapps
             "#{__dirname}/node_modules"
             "#{__dirname}/.."
-        extensions: <[ .ls .pug .html ]>
+        extensions: <[ .ls .pug ]>
         cache: browserify-cache
         package-cache: {}
-        plugin:
-            watchify unless optimize-for-production
+        #plugin:
+        #    watchify unless optimize-for-production
 
     b
         ..transform (file) ->
-            # MUST be before ractive-preparserify
             unless /.*\.ls$/.test(file)
                 return through!
                 
@@ -222,8 +220,15 @@ get-bundler = (entry) ->
 
             return through.obj write, flush 
             
-        ..transform ractive-preparserify
+        ..transform ractive-preparserify(browserify-cache)
         #..transform browserify-optimize-js
+
+    b.on \update, (ids) !-> 
+        console.log "update for #entry"
+        console.log "updated ids: ", ids 
+        b.bundle!
+
+    return b 
 
 # Concatenate vendor javascript files into public/js/vendor.js
 compile-js = (watchlist, output) ->
@@ -255,6 +260,18 @@ compile-css = (watchlist, output) ->
         # themes are searched in ../themes path, so do not save css in root
         # folder
         .pipe gulp.dest "#{paths.client-public}/css"
+
+debug-cache = (cache) -> 
+    o = JSON.parse JSON.stringify cache 
+    simplify-object = (obj) -> 
+        for k, v of obj
+            if k is \source 
+                obj[k] = "Some #{v.length} characters long string"
+            if typeof! v is \Object 
+                obj[k] = simplify-object v
+        return obj 
+
+    console.log JSON.stringify simplify-object(o), null, 2
 
 # Gulp Tasks 
 # ---------------------
@@ -303,6 +320,14 @@ gulp.task \browserify, ->
                     first-browserify-done := yes
                     b-count := files.length
                     console.log "------------------------------------------"
+                    /*
+                    debug-cache browserify-cache
+                    console.log "invalidating app2.ls in 3 seconds."
+                    <~ sleep 3000ms 
+                    touch.sync "/home/ceremcem/sync/curr-projects/aktos/scadajs-template/webapps/main/app2.ls"
+                    console.log "Right after invalidating app2.ls"
+                    debug-cache browserify-cache 
+                    */
     return es.merge.apply null, tasks
     
 #gulp.task \browserifyAll, gulp.parallel()->
@@ -315,13 +340,6 @@ gulp.task \versionTrack, ->
         if (JSON.stringify(version) isnt JSON.stringify(curr)) 
             curr := JSON.parse JSON.stringify version
             console.log "Changed project version: ", curr 
-            """ DEBUG
-            dump-file = (name, obj) ->
-                require('fs').writeFileSync(name, JSON.stringify(obj, null, 2))
-
-            dump-file "tmp-preparserify-dep-list", preparserify-dep-list
-            dump-file "tmp-browserify-cache", browserify-cache
-            """
         <~ sleep 1000ms
         lo(op) unless argv.production
 # End of Browserify 
@@ -393,6 +411,7 @@ gulp.task \pug (done) ->
             .pipe gulp.dest paths.client-public
     done!
 
+'''
 # FIXME: This is a workaround before ractive-preparserify
 # will handle the browserify cache invalidation 
 debounce = {}
@@ -420,6 +439,7 @@ gulp.task \preparserify-workaround ->
                     debounce[js-file] = sleep 100ms, ->
                         touch.sync js-file
                         delete debounce[js-file]
+'''
 
 gulp.task \watchChanges, (done) ->
     unless optimize-for-production
@@ -430,8 +450,8 @@ gulp.task \watchChanges, (done) ->
         watch for-css2, gulp.series \vendor2-css
         watch for-js2, gulp.series \vendor2-js
         watch for-assets, gulp.series \assets
-        watch for-browserify, gulp.series \browserify
-        watch for-preparserify-workaround, gulp.series \preparserify-workaround
+        # wathces file all by itself: watch for-browserify, gulp.series \browserify
+        #watch for-preparserify-workaround, gulp.series \preparserify-workaround
     done!
 
 # Start the tasks
@@ -444,6 +464,6 @@ gulp.task \default, gulp.series do
     \assets
     \pug
     \watchChanges
-    \preparserify-workaround
+    #\preparserify-workaround
     \versionTrack
     \browserify

@@ -18,8 +18,6 @@ Example:
 
 ********************************************************************************/
 
-export preparserify-dep-list = {}
-
 preparse-pug = (filename, template) ->
     """
     Returns {parsed, dependencies}
@@ -73,45 +71,27 @@ preparse-pug = (filename, template) ->
 function isTemplate file
     return /.*\.(html|pug)$/.test(file);
 
-export ractive-preparserify = (file) ->
-    if not isTemplate(file)
-        return through()
-    
+export ractive-preparserify = (cache) -> 
     #console.log "ractive-preparserify file is:", file
-    contents = ''
-    write = (chunk, enc, next) !->
-        contents += chunk.to-string \utf-8
-        next!
+    # TODO: https://stackoverflow.com/questions/63151235/how-to-tell-browserify-to-invalidate-the-related-caches-through-a-transform-modu    
+    return (file) ->
+        if not isTemplate(file)
+            return through()        
+        contents = ''
+        write = (chunk, enc, next) !->
+            contents += chunk.to-string \utf-8
+            next!
 
-    flush = (cb) -> 
-        try
-            x = preparse-pug file, contents
-            @push "module.exports = #{JSON.stringify x.parsed}"
-            /*
-            for x.dependencies
-                console.log "emitting dependency:", ..
-                @emit \file, .. 
-            */
+        flush = (cb) -> 
+            try
+                x = preparse-pug file, contents
+                @push "module.exports = #{JSON.stringify x.parsed}"
+                for x.dependencies
+                    console.log "registering dep: ", .. 
+                    @emit \file, ..
+                cb!
+            catch
+                console.error "Preparserify error: ", e
+                @emit 'error', e
 
-            cb!
-        catch
-            console.error "Preparserify error: ", e
-            @emit 'error', e
-
-    return through.obj write, flush
-
-    /*
-    this.queue(src);
-    this.queue(null);
-    */
-
-    /*
-    through (buf, enc, next) ->
-        __ = this
-        content = buf.to-string \utf8
-        #[template-file, template-id] = params-str.split ',' |> map (.replace /["'\s]+/g, '')
-        
-        
-        # this.push(content.replace /require\(([^\)]+)\)/g, preparse-jade)
-        next!
-    */
+        return through.obj write, flush
