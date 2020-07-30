@@ -1,4 +1,4 @@
-require! 'through2': through
+require! 'through': through
 require! <[ pug path cheerio fs ]>
 require! 'ractive': Ractive
 require! 'prelude-ls': {map, keys}
@@ -77,21 +77,20 @@ export ractive-preparserify = (cache) ->
     return (file) ->
         if not isTemplate(file)
             return through()        
+        console.log "Ractive preparserifying file: #file"
         contents = ''
-        write = (chunk, enc, next) !->
+        write = (chunk) !->
             contents += chunk.to-string \utf-8
-            next!
 
-        flush = (cb) -> 
+        end = -> 
             try
                 x = preparse-pug file, contents
-                @push "module.exports = #{JSON.stringify x.parsed}"
                 for x.dependencies
-                    console.log "registering dep: ", .. 
-                    @emit \file, ..
-                cb!
+                    @emit \dep, ..
+                @queue "module.exports = #{JSON.stringify x.parsed}"
             catch
                 console.error "Preparserify error: ", e
                 @emit 'error', e
+            @queue null 
 
-        return through.obj write, flush
+        return through write, end
